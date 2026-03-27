@@ -1,0 +1,5 @@
+.DS_Store
+plugins/openproject/.env
+plugins/openproject/.env.local
+plugins/openproject/scripts/__pycache__/
+

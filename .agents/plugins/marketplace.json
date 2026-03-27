@@ -1,0 +1,21 @@
+{
+  "name": "team-codex-plugins",
+  "interface": {
+    "displayName": "Team Codex Plugins"
+  },
+  "plugins": [
+    {
+      "name": "openproject",
+      "source": {
+        "source": "local",
+        "path": "./plugins/openproject"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+

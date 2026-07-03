@@ -13,6 +13,8 @@ server.
 - create work packages
 - update work packages
 - add comments to work packages
+- list customer options from the Customer custom field
+- add one or many customer options through the admin custom-field form
 
 ## Configuration
 
@@ -30,6 +32,9 @@ Supported variables:
 - `OPENPROJECT_BASE_URL`
 - `OPENPROJECT_API_TOKEN`
 - `OPENPROJECT_ACCESS_TOKEN`
+- `OPENPROJECT_ADMIN_USERNAME`
+- `OPENPROJECT_ADMIN_PASSWORD`
+- `OPENPROJECT_CUSTOMER_FIELD_ID`
 
 `OPENPROJECT_BASE_URL` should be the root URL of your instance, for example:
 
@@ -42,6 +47,17 @@ Do not append `/api/v3`; the server normalizes that automatically.
 For authentication, the recommended path is an OpenProject API token passed as a
 Bearer token via `OPENPROJECT_API_TOKEN`. OpenProject's API docs also document
 Bearer tokens and OAuth2 access tokens for API v3.
+
+For customer-option management, the plugin can also use an authenticated admin
+HTML session. Set `OPENPROJECT_ADMIN_USERNAME` and
+`OPENPROJECT_ADMIN_PASSWORD` to enable:
+
+- `list_customer_options`
+- `add_customer_option`
+- `bulk_add_customer_options`
+
+`OPENPROJECT_CUSTOMER_FIELD_ID` defaults to `4`, which is the `Customer`
+custom field id used by the current Medics workspace.
 
 Do not commit `.env` or real tokens.
 

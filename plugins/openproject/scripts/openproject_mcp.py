@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import base64
+import html.parser
 import json
 import os
 import sys
 import traceback
+from http import cookiejar
 from pathlib import Path
 from typing import Any
 from urllib import error, parse, request
@@ -51,6 +53,27 @@ class OpenProjectApiError(Exception):
         self.status = status
         self.message = message
         self.details = details
+
+
+class FormParser(html.parser.HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.forms: list[dict[str, Any]] = []
+        self._current_form: dict[str, Any] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key: value or "" for key, value in attrs}
+        if tag == "form":
+            self._current_form = {
+                "action": attr_map.get("action", ""),
+                "method": attr_map.get("method", "get").lower(),
+                "inputs": [],
+            }
+            self.forms.append(self._current_form)
+            return
+
+        if tag == "input" and self._current_form is not None:
+            self._current_form["inputs"].append(attr_map)
 
 
 def first_env(*names: str) -> str | None:
@@ -183,6 +206,14 @@ def summarize_work_package(work_package: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def summarize_customer_option(option: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": option.get("id"),
+        "value": option.get("value"),
+        "default": option.get("default"),
+    }
+
+
 class OpenProjectClient:
     def __init__(self) -> None:
         base_url = first_env("OPENPROJECT_BASE_URL")
@@ -300,6 +331,183 @@ class OpenProjectClient:
             raise OpenProjectApiError(502, "OpenProject returned a non-object JSON payload.", parsed)
 
         return parsed
+
+
+class OpenProjectAdminClient:
+    def __init__(self) -> None:
+        base_url = first_env("OPENPROJECT_BASE_URL")
+        if not base_url:
+            raise ConfigError(
+                "OPENPROJECT_BASE_URL is not configured. Set it in the environment "
+                "or in plugins/openproject/.env."
+            )
+
+        self.base_url = base_url.rstrip("/")
+        self.username = first_env("OPENPROJECT_ADMIN_USERNAME")
+        self.password = first_env("OPENPROJECT_ADMIN_PASSWORD")
+        field_id = first_env("OPENPROJECT_CUSTOMER_FIELD_ID", "OPENPROJECT_CUSTOM_FIELD_ID")
+        self.customer_field_id = field_id or "4"
+
+        if not self.username or not self.password:
+            raise ConfigError(
+                "OPENPROJECT_ADMIN_USERNAME and OPENPROJECT_ADMIN_PASSWORD are required "
+                "for customer option management."
+            )
+
+        self._opener = request.build_opener(request.HTTPCookieProcessor(cookiejar.CookieJar()))
+        self._login()
+
+    def _headers(self, include_form: bool = False) -> dict[str, str]:
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": f"codex-openproject-plugin/{SERVER_VERSION}",
+        }
+        if include_form:
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        return headers
+
+    def _request_text(
+        self,
+        method: str,
+        url: str,
+        *,
+        body: str | None = None,
+        include_form: bool = False,
+    ) -> str:
+        data = body.encode("utf-8") if body is not None else None
+        req = request.Request(
+            url,
+            data=data,
+            headers=self._headers(include_form=include_form),
+            method=method.upper(),
+        )
+        try:
+            with self._opener.open(req, timeout=30) as response:
+                return response.read().decode("utf-8", errors="replace")
+        except error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise OpenProjectApiError(exc.code, raw, raw) from exc
+        except error.URLError as exc:
+            raise ConfigError(f"Could not reach OpenProject at {self.base_url}: {exc.reason}") from exc
+
+    def _parse_forms(self, html: str) -> list[dict[str, Any]]:
+        parser = FormParser()
+        parser.feed(html)
+        return parser.forms
+
+    def _find_input_value(self, html: str, input_name: str) -> str | None:
+        for form in self._parse_forms(html):
+            for item in form["inputs"]:
+                if item.get("name") == input_name:
+                    return item.get("value", "")
+        return None
+
+    def _login(self) -> None:
+        login_html = self._request_text("GET", f"{self.base_url}/login")
+        authenticity_token = self._find_input_value(login_html, "authenticity_token")
+        if not authenticity_token:
+            raise ConfigError("Could not find OpenProject login authenticity token.")
+
+        payload = parse.urlencode(
+            {
+                "authenticity_token": authenticity_token,
+                "back_url": f"{self.base_url}/custom_fields/{self.customer_field_id}/list_items",
+                "username": self.username,
+                "password": self.password,
+            }
+        )
+        self._request_text(
+            "POST",
+            f"{self.base_url}/login",
+            body=payload,
+            include_form=True,
+        )
+
+        customer_page = self._request_text("GET", self.customer_list_url())
+        if "Sign in | OpenProject" in customer_page:
+            raise ConfigError("OpenProject admin login failed. Check OPENPROJECT_ADMIN_USERNAME and OPENPROJECT_ADMIN_PASSWORD.")
+
+    def customer_list_url(self) -> str:
+        return f"{self.base_url}/custom_fields/{self.customer_field_id}/list_items"
+
+    def get_customer_form(self) -> dict[str, Any]:
+        html = self._request_text("GET", self.customer_list_url())
+        forms = self._parse_forms(html)
+        for form in forms:
+            action = form.get("action", "")
+            if action.endswith(f"/custom_fields/{self.customer_field_id}"):
+                return form
+        raise ConfigError(f"Could not find customer option form for custom field {self.customer_field_id}.")
+
+    def list_customer_options(self) -> list[dict[str, Any]]:
+        form = self.get_customer_form()
+        options: list[dict[str, Any]] = []
+        by_prefix: dict[str, dict[str, Any]] = {}
+        for item in form["inputs"]:
+            name = item.get("name", "")
+            if not name.startswith("custom_field[custom_options_attributes]["):
+                continue
+            prefix, _, field = name.rpartition("[")
+            field = field.rstrip("]")
+            target = by_prefix.setdefault(prefix, {"default": False})
+            if field == "id":
+                target["id"] = item.get("value", "")
+            elif field == "value" and item.get("type") == "text":
+                target["value"] = item.get("value", "")
+            elif field == "default_value" and item.get("type") == "checkbox":
+                target["default"] = item.get("checked") == "checked"
+        for option in by_prefix.values():
+            if option.get("value"):
+                options.append(option)
+        options.sort(key=lambda item: str(item.get("value", "")).lower())
+        return options
+
+    def update_customer_options(self, new_values: list[str]) -> dict[str, Any]:
+        form = self.get_customer_form()
+        form_action = form.get("action", "")
+        action_url = form_action if form_action.startswith("http") else f"{self.base_url}{form_action}"
+        fields: list[tuple[str, str]] = []
+        existing_values: list[str] = []
+        existing_lower: set[str] = set()
+
+        for item in form["inputs"]:
+            name = item.get("name")
+            if not name:
+                continue
+            item_type = item.get("type", "")
+            if item_type == "checkbox":
+                if item.get("checked") == "checked":
+                    fields.append((name, item.get("value", "1")))
+                continue
+            value = item.get("value", "")
+            fields.append((name, value))
+            if item_type == "text" and name.endswith("[value]"):
+                existing_values.append(value)
+                existing_lower.add(value.strip().lower())
+
+        appended = []
+        next_index = len(existing_values)
+        for raw_value in new_values:
+            value = str(raw_value).strip()
+            if not value or value.lower() in existing_lower:
+                continue
+            fields.append((f"custom_field[custom_options_attributes][{next_index}][value]", value))
+            fields.append((f"custom_field[custom_options_attributes][{next_index}][default_value]", "0"))
+            existing_lower.add(value.lower())
+            appended.append(value)
+            next_index += 1
+
+        if not appended:
+            return {"added": [], "count": len(existing_values)}
+
+        payload = parse.urlencode(fields)
+        self._request_text("POST", action_url, body=payload, include_form=True)
+        options = self.list_customer_options()
+        persisted = {item.get("value", "") for item in options}
+        missing = [value for value in appended if value not in persisted]
+        if missing:
+            raise OpenProjectApiError(502, "OpenProject did not persist all customer options.", {"missing": missing})
+        return {"added": appended, "count": len(options)}
 
 
 def list_projects_impl(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -689,6 +897,42 @@ def tool_comment_on_work_package(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"activity": summarize_activity(activity)}
 
 
+def tool_list_customer_options(_: dict[str, Any]) -> dict[str, Any]:
+    client = OpenProjectAdminClient()
+    options = [summarize_customer_option(item) for item in client.list_customer_options()]
+    return {
+        "count": len(options),
+        "customer_field_id": client.customer_field_id,
+        "options": options,
+    }
+
+
+def tool_add_customer_option(arguments: dict[str, Any]) -> dict[str, Any]:
+    value = str(arguments.get("value") or "").strip()
+    if not value:
+        raise ConfigError("value is required.")
+    client = OpenProjectAdminClient()
+    result = client.update_customer_options([value])
+    return {
+        "customer_field_id": client.customer_field_id,
+        "added": result["added"],
+        "count": result["count"],
+    }
+
+
+def tool_bulk_add_customer_options(arguments: dict[str, Any]) -> dict[str, Any]:
+    values = arguments.get("values")
+    if not isinstance(values, list) or not values:
+        raise ConfigError("values must be a non-empty list of customer names.")
+    client = OpenProjectAdminClient()
+    result = client.update_customer_options([str(item) for item in values])
+    return {
+        "customer_field_id": client.customer_field_id,
+        "added": result["added"],
+        "count": result["count"],
+    }
+
+
 TOOLS: dict[str, dict[str, Any]] = {
     "server_info": {
         "description": "Return OpenProject plugin configuration status and resolved API root.",
@@ -854,6 +1098,42 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "handler": tool_comment_on_work_package,
+    },
+    "list_customer_options": {
+        "description": "List allowed values for the OpenProject Customer custom field using the admin custom-field form.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+        "handler": tool_list_customer_options,
+    },
+    "add_customer_option": {
+        "description": "Add one new allowed value to the OpenProject Customer custom field using admin credentials.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "string"}
+            },
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+        "handler": tool_add_customer_option,
+    },
+    "bulk_add_customer_options": {
+        "description": "Add multiple new allowed values to the OpenProject Customer custom field using admin credentials.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "values": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                }
+            },
+            "required": ["values"],
+            "additionalProperties": False,
+        },
+        "handler": tool_bulk_add_customer_options,
     },
 }
 

@@ -5,6 +5,7 @@ This repository distributes Codex plugins for internal use.
 ## Included plugins
 
 - `openproject`: OpenProject MCP-backed plugin for projects and work packages
+- `bugzilla`: Bugzilla REST/JSON-RPC MCP plugin with an OpenProject bridge
 
 ## Install in Codex
 
@@ -31,6 +32,12 @@ OPENPROJECT_API_TOKEN=your-openproject-api-token
 
 Do not commit `.env` files or real tokens.
 
+## Bugzilla setup
+
+Each user can create `plugins/bugzilla/.env` from
+`plugins/bugzilla/.env.example`. The plugin automatically uses REST when
+available and falls back to JSON-RPC for older Bugzilla installations.
+
 To get an API token in OpenProject:
 
 1. Sign in.
@@ -39,4 +46,3 @@ To get an API token in OpenProject:
 4. Create a new `API token`.
 
 You can also start from [plugins/openproject/.env.example](/Users/sai/Documents/GitHub/team-codex-plugins/plugins/openproject/.env.example).
-

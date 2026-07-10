@@ -1,0 +1,41 @@
+{
+  "name": "bugzilla",
+  "version": "0.1.0",
+  "description": "Codex plugin for searching and managing Bugzilla through REST or JSON-RPC with an OpenProject bridge.",
+  "author": {
+    "name": "Medics Engineering",
+    "email": "engineering@medicsprime.in"
+  },
+  "homepage": "https://www.bugzilla.org/",
+  "repository": "https://github.com/varaprasadreddy9676/team-codex-plugins",
+  "license": "UNLICENSED",
+  "keywords": [
+    "bugzilla",
+    "mcp",
+    "json-rpc",
+    "openproject",
+    "issue-tracking"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Bugzilla",
+    "shortDescription": "Search Bugzilla and move approved bugs into OpenProject.",
+    "longDescription": "Connect Codex to Bugzilla using REST when available or JSON-RPC for older Bugzilla installations such as 5.0.2. Read operations work directly, while writes require explicit confirmation. Selected bugs can be previewed and created as OpenProject work packages.",
+    "developerName": "Medics Engineering",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Interactive"
+    ],
+    "websiteURL": "https://www.bugzilla.org/",
+    "defaultPrompt": [
+      "Show me the latest open Bugzilla bugs.",
+      "Find Bugzilla bugs for the medics product.",
+      "Preview creating this Bugzilla bug in OpenProject."
+    ],
+    "brandColor": "#CC7A00",
+    "screenshots": []
+  }
+}

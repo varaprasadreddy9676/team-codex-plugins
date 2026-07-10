@@ -2,4 +2,6 @@
 plugins/openproject/.env
 plugins/openproject/.env.local
 plugins/openproject/scripts/__pycache__/
-
+plugins/bugzilla/.env
+plugins/bugzilla/.env.local
+plugins/bugzilla/scripts/__pycache__/

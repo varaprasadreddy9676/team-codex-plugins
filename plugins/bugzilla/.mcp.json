@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "bugzilla": {
+      "type": "stdio",
+      "command": "/bin/zsh",
+      "args": [
+        "-lc",
+        "python3 ./plugins/bugzilla/scripts/bugzilla_mcp.py 2>/dev/null || python3 ./scripts/bugzilla_mcp.py"
+      ]
+    }
+  }
+}
